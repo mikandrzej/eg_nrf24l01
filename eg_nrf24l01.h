@@ -3,7 +3,13 @@
 #include "stdint.h"
 #include "eg_nrf24l01_internal.h"
 
-#define EG_NRF24L01_MAX_ADDRESS_NO 6u
+/**
+ * @addtogroup NRF24L01_driver NRF24L01 communication module driver
+ * @{
+ * 
+ */
+
+#define EG_NRF24L01_MAX_ADDRESS_NO 6u /**< Maximum address index */
 
 /** NRF24L01 error codes */
 typedef enum
@@ -53,7 +59,29 @@ extern eg_nrf_error_e eg_nrf24l01_init(eg_nrf24l01_state_s *state, eg_nrf24l01_i
  */
 extern void eg_nrf24l01_process(eg_nrf24l01_state_s *state);
 
+/**
+ * Function to Power On the module
+ * 
+ * @param state pointer to internal driver state object
+ * @return eg_nrf_error_e error code
+ */
 extern eg_nrf_error_e eg_nrf24l01_power_on(eg_nrf24l01_state_s *state);
+
+/**
+ * Function to Wake up the module
+ * 
+ * @param state pointer to internal driver state object
+ * @return eg_nrf_error_e error code
+ */
+extern eg_nrf_error_e eg_nrf24l01_wake_up(eg_nrf24l01_state_s *state);
+
+/**
+ * Function to Sleep the module
+ * 
+ * @param state pointer to internal driver state object
+ * @return eg_nrf_error_e error code
+ */
+extern eg_nrf_error_e eg_nrf24l01_sleep(eg_nrf24l01_state_s *state);
 
 /**
  * User function to get timestamp in ms.
@@ -89,4 +117,17 @@ extern void eg_nrf24l01_user_spi_transmit_receive(eg_nrf24l01_state_s *state,
  */
 extern void eg_nrf24l01_spi_comm_complete(eg_nrf24l01_state_s *state,
                                           uint8_t rx_len);
+
+/**
+ * Function to handle External Interrupt on FALLING edge of IRQ module pin
+ * 
+ * @param state pointer to internal driver state object given by eg_nrf24l01_user_spi_transmit_receive function
+ */
+extern void eg_nrf24l01_irq_handler(eg_nrf24l01_state_s *state);
+
+/**
+ * @}
+ * 
+ */
+
 #endif /* _EG_NRF24L01_H_ */

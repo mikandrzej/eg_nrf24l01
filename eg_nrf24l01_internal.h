@@ -1,6 +1,12 @@
 #ifndef _EG_NRF24L01_INTERNAL_H_
 #define _EG_NRF24L01_INTERNAL_H_
 
+/**
+ * @addtogroup NRF24L01_driver NRF24L01 communication module driver
+ * @{
+ * @addtogroup NRF24L01_driver_internal Internal header data
+ * @{
+ */
 /** Maximum address length in bytes */
 #define EG_NRF24L01_ADDRESS_MAX_WIDTH 5u
 
@@ -10,16 +16,20 @@ typedef void (*eg_nrf_rx_callback)(uint8_t *data, uint8_t data_size);
 typedef void (*eg_nrf_set_pin_state_callback)(uint8_t state);
 
 /** nRF24L01 SETUP_AW register struct */
-typedef struct
+typedef union
 {
-    /** RX/TX Address field width
-     * '00' - Illegal
-     * '01' - 3 bytes
-     * '10' - 4 bytes
-     * '11' – 5 bytes
-     * LSByte is used if address width is below 5 bytes */
-    uint8_t aw : 2;
-    uint8_t : 6;
+    struct
+    {
+        /** RX/TX Address field width
+         * '00' - Illegal
+         * '01' - 3 bytes
+         * '10' - 4 bytes
+         * '11' – 5 bytes
+         * LSByte is used if address width is below 5 bytes */
+        uint8_t aw : 2;
+        uint8_t : 6;
+    } __attribute__((packed));
+    uint8_t val; /** RAW value */
 } eg_nrf24l01_setup_aw_reg_s;
 
 /** nRF24L01 CONFIG register struct */
@@ -32,12 +42,43 @@ typedef union
         uint8_t crco : 1;        /**< CRC encoding scheme */
         uint8_t en_crc : 1;      /**< Enable CRC */
         uint8_t mask_max_rt : 1; /**< Mask interrupt caused by TX_DS */
-        uint8_t mask_max_ds : 1; /**< Mask interrupt caused by RX_DS */
+        uint8_t mask_tx_ds : 1;  /**< Mask interrupt caused by RX_DS */
         uint8_t mask_rx_dr : 1;  /**< Mask interrupt caused by RX_DR */
         uint8_t : 1;
     } __attribute__((packed));
     uint8_t val; /** RAW value */
 } eg_nrf24l01_config_reg_s;
+
+/** nRF24L01 STATUS register struct */
+typedef union
+{
+    struct
+    {
+        uint8_t tx_full : 1; /**< TX FIFO full flag */
+        uint8_t rx_p_no : 3; /**< Data pipe number for the payload available */
+        uint8_t max_rt : 1;  /**< Maximum number of TX retransmits interrupt */
+        uint8_t tx_ds : 1;   /**< Data Sent TX FIFO interrupt */
+        uint8_t rx_dr : 1;   /**< Data Ready RX FIFO interrupt */
+        uint8_t : 1;
+    } __attribute__((packed));
+    uint8_t val; /** RAW value */
+} eg_nrf24l01_status_reg_s;
+
+/** nRF24L01 FIFO_STATUS register struct */
+typedef union
+{
+    struct
+    {
+        uint8_t rx_empty : 1; /**< RX FIFO empty flag */
+        uint8_t rx_full : 1;  /**< RX FIFO full flag */
+        uint8_t : 2;
+        uint8_t tx_empty : 1; /**< TX FIFO empty flag. */
+        uint8_t tx_full : 1;  /**< TX FIFO full flag */
+        uint8_t tx_reuse : 1; /**< Used for a PTX device */
+        uint8_t : 1;
+    } __attribute__((packed));
+    uint8_t val; /** RAW value */
+} eg_nrf24l01_fifo_status_reg_s;
 
 /** nRF24L01 Enable Auto Acknowledgment register */
 typedef struct
@@ -101,16 +142,18 @@ typedef struct
     /** nRF24L01 module registers cache*/
     struct
     {
+        eg_nrf24l01_config_reg_s config;                   /**< CONFIG register value */
+        eg_nrf24l01_en_rxaddr_reg_s en_aa;                 /**< EN_AA register value */
+        eg_nrf24l01_en_rxaddr_reg_s en_rxaddr;             /**< EN_RXADDR register value */
         eg_nrf24l01_setup_aw_reg_s setup_aw;               /**< SETUP_AW register value */
+        eg_nrf24l01_status_reg_s status;                   /**< STATUS register value */
         uint8_t rx_addr_p0[EG_NRF24L01_ADDRESS_MAX_WIDTH]; /**< RX address on PIPE 0 */
         uint8_t rx_addr_p1[EG_NRF24L01_ADDRESS_MAX_WIDTH]; /**< RX address on PIPE 1 */
         uint8_t rx_addr_p2;                                /**< RX address on PIPE 2 - four MSB ar the same as on P1 */
         uint8_t rx_addr_p3;                                /**< RX address on PIPE 3 - four MSB ar the same as on P1 */
         uint8_t rx_addr_p4;                                /**< RX address on PIPE 4 - four MSB ar the same as on P1 */
         uint8_t rx_addr_p5;                                /**< RX address on PIPE 5 - four MSB ar the same as on P1 */
-        eg_nrf24l01_en_rxaddr_reg_s en_rxaddr;             /**< EN_RXADDR register value */
-        eg_nrf24l01_en_rxaddr_reg_s en_aa;                 /**< EN_AA register value */
-        eg_nrf24l01_config_reg_s config;                   /**< CONFIG register value */
+        eg_nrf24l01_fifo_status_reg_s fifo_status;         /**< FIFO_STATUS register value */
     } config_registers;
 
     /** RX pipes user configuration */
@@ -135,6 +178,12 @@ typedef struct
     /* SM data */
     /** Machine state internal Power On Request flag */
     volatile uint8_t power_on_request;
+    /** Machine state internal Wake Up Request flag */
+    volatile uint8_t wake_up_request;
+    /** Machine state internal Sleep Request flag */
+    volatile uint8_t sleep_request;
+    /** Machine state internal External Interrupt Request flag */
+    volatile uint8_t ext_interrupt_request;
     /** Machine state SPI data ready flag */
     volatile uint8_t spi_data_ready;
     /** Saved timestamp value */
@@ -142,5 +191,11 @@ typedef struct
     /** State machine state */
     eg_nrf24l01_sm_state_e sm_state;
 } eg_nrf24l01_state_s;
+
+/**
+ * @}
+ * @}
+ *
+ */
 
 #endif /* _EG_NRF24L01_INTERNAL_H_ */
