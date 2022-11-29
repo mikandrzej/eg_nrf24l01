@@ -18,11 +18,12 @@
 
 #define NRF_CMD_READ_REG 0x00u
 #define NRF_CMD_WRITE_REG 0x20u
-#define NRF_CMD_NOP 0xFFu
+#define NRF_CMD_R_RX_PAYLOAD 0x61u
 #define NRF_CMD_W_TX_PAYLOAD 0xA0u
 #define NRF_CMD_W_TX_PAYLOAD_NO_ACK 0xB0u
 #define NRF_CMD_FLUSH_TX 0xE1
 #define NRF_CMD_FLUSH_RX 0xE2
+#define NRF_CMD_NOP 0xFFu
 
 #define NRF_REG_CONFIG 0x00u
 #define NRF_REG_EN_AA 0x01u
@@ -54,10 +55,12 @@ static void sm_state_module_startup_handler(eg_nrf24l01_state_s *state);
 static void sm_state_configure_handler(eg_nrf24l01_state_s *state);
 static void sm_state_sleep_handler(eg_nrf24l01_state_s *state);
 static void sm_state_idle_handler(eg_nrf24l01_state_s *state);
-static void sm_state_ext_int_handler(eg_nrf24l01_state_s *state);
+static void sm_state_status_read_handler(eg_nrf24l01_state_s *state);
 static void sm_state_status_reading_handler(eg_nrf24l01_state_s *state);
 static void sm_state_receive_handler(eg_nrf24l01_state_s *state);
+static void sm_state_receiving_length_handler(eg_nrf24l01_state_s *state);
 static void sm_state_receiving_handler(eg_nrf24l01_state_s *state);
+static void sm_state_receiving_clear_handler(eg_nrf24l01_state_s *state);
 static void sm_state_transmit_handler(eg_nrf24l01_state_s *state);
 static void sm_state_transmitting_handler(eg_nrf24l01_state_s *state);
 static void sm_state_powering_off_handler(eg_nrf24l01_state_s *state);
@@ -78,10 +81,12 @@ const state_handler state_handlers_lut[NRF_SM_MAX_STATE] = {
     sm_state_configure_handler,
     sm_state_sleep_handler,
     sm_state_idle_handler,
-    sm_state_ext_int_handler,
+    sm_state_status_read_handler,
     sm_state_status_reading_handler,
     sm_state_receive_handler,
+    sm_state_receiving_length_handler,
     sm_state_receiving_handler,
+    sm_state_receiving_clear_handler,
     sm_state_transmit_handler,
     sm_state_transmitting_handler,
     sm_state_powering_off_handler};
@@ -104,14 +109,15 @@ eg_nrf_error_e eg_nrf24l01_init(eg_nrf24l01_state_s *state, eg_nrf24l01_init_dat
     const struct
     {
         uint8_t *dest_address;
+        eg_nrf24l01_rx_pw_px_reg_s *rx_pw_px;
     } addr_lut[EG_NRF24L01_MAX_ADDRESS_NO] =
         {
-            {.dest_address = state->config_registers.rx_addr_p0},
-            {.dest_address = state->config_registers.rx_addr_p1},
-            {.dest_address = &state->config_registers.rx_addr_p2},
-            {.dest_address = &state->config_registers.rx_addr_p3},
-            {.dest_address = &state->config_registers.rx_addr_p4},
-            {.dest_address = &state->config_registers.rx_addr_p5},
+            {.dest_address = state->config_registers.rx_addr_p0, .rx_pw_px = &state->config_registers.rx_pw_p0},
+            {.dest_address = state->config_registers.rx_addr_p1, .rx_pw_px = &state->config_registers.rx_pw_p1},
+            {.dest_address = &state->config_registers.rx_addr_p2, .rx_pw_px = &state->config_registers.rx_pw_p2},
+            {.dest_address = &state->config_registers.rx_addr_p3, .rx_pw_px = &state->config_registers.rx_pw_p3},
+            {.dest_address = &state->config_registers.rx_addr_p4, .rx_pw_px = &state->config_registers.rx_pw_p4},
+            {.dest_address = &state->config_registers.rx_addr_p5, .rx_pw_px = &state->config_registers.rx_pw_p5},
         };
 
     for (uint8_t i = 0; i < EG_NRF24L01_MAX_ADDRESS_NO; i++)
@@ -142,6 +148,8 @@ eg_nrf_error_e eg_nrf24l01_init(eg_nrf24l01_state_s *state, eg_nrf24l01_init_dat
             }
 
             state->rx_pipe[i].rx_callback = init_data->rx_pipe[i].rx_callback;
+
+            addr_lut[i].rx_pw_px->rx_pw_px = 10;
         }
     }
 
@@ -149,6 +157,7 @@ eg_nrf_error_e eg_nrf24l01_init(eg_nrf24l01_state_s *state, eg_nrf24l01_init_dat
 
     state->set_ce_callback = init_data->set_ce_callback;
     state->set_csn_callback = init_data->set_csn_callback;
+    state->get_irq_callback = init_data->ger_irq_callback;
 
     return NRF_OK;
 }
@@ -215,28 +224,23 @@ void eg_nrf24l01_spi_comm_complete(eg_nrf24l01_state_s *state,
     }
 }
 
-void eg_nrf24l01_irq_handler(eg_nrf24l01_state_s *state)
-{
-    if (state != NULL)
-    {
-        state->ext_interrupt_request = 1u;
-    }
-}
-
 static void sm_state_power_off_handler(eg_nrf24l01_state_s *state)
 {
     if (1u == state->power_on_request)
     {
         state->timestamp = eg_nrf24l01_user_timestamp_get() + POWER_ON_TIME_MS;
 
+        if (state->set_csn_callback != NULL)
+        {
+            state->set_csn_callback(1u);
+        }
+        if (state->set_ce_callback != NULL)
+        {
+            state->set_ce_callback(0u);
+        }
+
         /* Power UP the module */
         state->config_registers.config.pwr_up = 1u;
-        /* Set module to RX mode */
-        state->config_registers.config.prim_rx = 1u;
-        /* Enable RX Data Ready interrupt */
-        state->config_registers.config.mask_rx_dr = 1u;
-        /* Enable TX Data Sent interrupt */
-        state->config_registers.config.mask_tx_ds = 1u;
 
         spi_write_register(state,
                            NRF_REG_CONFIG,
@@ -260,37 +264,59 @@ static void sm_state_module_startup_handler(eg_nrf24l01_state_s *state)
 }
 static void sm_state_configure_handler(eg_nrf24l01_state_s *state)
 {
-    // /* Configure EN_AA register */
-    // spi_write_register(state,
-    //                    NRF_REG_EN_AA,
-    //                    &state->config_registers.en_aa.val,
-    //                    sizeof(state->config_registers.en_aa));
-    // while (0u == state->spi_data_ready)
-    //     ;
+    /* Set module to RX mode */
+    state->config_registers.config.prim_rx = 1u;
+    /* RX Data Ready interrupt is enabled by default */
+    /* TX Data Sent interrupt is enabled by default */
 
-    // /* Configure EN_RXADDR register */
-    // spi_write_register(state,
-    //                    NRF_REG_EN_RXADDR,
-    //                    &state->config_registers.en_rxaddr.val,
-    //                    sizeof(state->config_registers.en_rxaddr));
-    // while (0u == state->spi_data_ready)
-    //     ;
+    /* Disable Max Retransmissions interrupt */
+    state->config_registers.config.mask_max_rt = 1u;
+    /* Write config register */
+    spi_write_register(state,
+                       NRF_REG_CONFIG,
+                       &state->config_registers.config.val,
+                       sizeof(state->config_registers.config));
+    while (0u == state->spi_data_ready)
+        ;
 
-    // /* Configure SETUP_AW register */
-    // spi_write_register(state,
-    //                    NRF_REG_SETUP_AW,
-    //                    &state->config_registers.setup_aw.val,
-    //                    sizeof(state->config_registers.setup_aw));
-    // while (0u == state->spi_data_ready)
-    //     ;
+    /* Configure EN_AA register */
+    spi_write_register(state,
+                       NRF_REG_EN_AA,
+                       &state->config_registers.en_aa.val,
+                       sizeof(state->config_registers.en_aa));
+    while (0u == state->spi_data_ready)
+        ;
 
-    // /* Configure RX_ADDR_P0 register */
-    // spi_write_register(state,
-    //                    NRF_REG_RX_ADDR_P0,
-    //                    state->config_registers.rx_addr_p0,
-    //                    sizeof(state->config_registers.rx_addr_p0));
-    // while (0u == state->spi_data_ready)
-    //     ;
+    /* Configure EN_RXADDR register */
+    spi_write_register(state,
+                       NRF_REG_EN_RXADDR,
+                       &state->config_registers.en_rxaddr.val,
+                       sizeof(state->config_registers.en_rxaddr));
+    while (0u == state->spi_data_ready)
+        ;
+
+    /* Configure SETUP_AW register */
+    spi_write_register(state,
+                       NRF_REG_SETUP_AW,
+                       &state->config_registers.setup_aw.val,
+                       sizeof(state->config_registers.setup_aw));
+    while (0u == state->spi_data_ready)
+        ;
+
+    /* Configure RX_ADDR_P0 register */
+    spi_write_register(state,
+                       NRF_REG_RX_ADDR_P0,
+                       state->config_registers.rx_addr_p0,
+                       sizeof(state->config_registers.rx_addr_p0));
+    while (0u == state->spi_data_ready)
+        ;
+    /* Set RX pipe data length in pipe 0 */
+    spi_write_register(state,
+                       NRF_REG_RX_PW_P0,
+                       &state->config_registers.rx_pw_p0.val,
+                       sizeof(state->config_registers.rx_pw_p0));
+    while (0u == state->spi_data_ready)
+        ;
     // /* Configure RX_ADDR_P1 register */
     // spi_write_register(state,
     //                    NRF_REG_RX_ADDR_P1,
@@ -326,20 +352,20 @@ static void sm_state_configure_handler(eg_nrf24l01_state_s *state)
     //                    sizeof(state->config_registers.rx_addr_p5));
     // while (0u == state->spi_data_ready)
     //     ;
-    // /* FLUSH_TX */
-    // spi_write_register(state,
-    //                    NRF_CMD_FLUSH_TX,
-    //                    NULL,
-    //                    0u);
-    // while (0u == state->spi_data_ready)
-    //     ;
-    // /* FLUSH_RX */
-    // spi_write_register(state,
-    //                    NRF_CMD_FLUSH_RX,
-    //                    NULL,
-    //                    0u);
-    // while (0u == state->spi_data_ready)
-    //     ;
+    /* FLUSH_TX */
+    spi_write_register(state,
+                       NRF_CMD_FLUSH_TX,
+                       NULL,
+                       0u);
+    while (0u == state->spi_data_ready)
+        ;
+    /* FLUSH_RX */
+    spi_write_register(state,
+                       NRF_CMD_FLUSH_RX,
+                       NULL,
+                       0u);
+    while (0u == state->spi_data_ready)
+        ;
 
     state->sm_state = NRF_SM_SLEEP;
 }
@@ -352,20 +378,29 @@ static void sm_state_sleep_handler(eg_nrf24l01_state_s *state)
         {
             state->set_ce_callback(1u);
         }
-        state->sm_state = NRF_SM_IDLE;
+        state->sm_state = NRF_SM_STATUS_READ;
     }
 }
 static void sm_state_idle_handler(eg_nrf24l01_state_s *state)
 {
-    if (1u == state->ext_interrupt_request)
+    if (1u == state->config_registers.status.rx_dr)
     {
-        state->sm_state = NRF_SM_EXT_INT;
+        state->sm_state = NRF_SM_RECEIVE;
+        // są dane do odebrania, zajmij się tym
+    }
+    else if(0u == state->config_registers.fifo_status.rx_empty)
+    {
+        state->sm_state = NRF_SM_RECEIVE;
+    }
+    else if (0u == state->get_irq_callback())
+    {
+        state->sm_state = NRF_SM_STATUS_READ;
     }
     else
     {
     }
 }
-static void sm_state_ext_int_handler(eg_nrf24l01_state_s *state)
+static void sm_state_status_read_handler(eg_nrf24l01_state_s *state)
 {
     spi_read_register(state, NRF_REG_FIFO_STATUS, 1u);
 
@@ -377,15 +412,68 @@ static void sm_state_status_reading_handler(eg_nrf24l01_state_s *state)
     {
         state->config_registers.status.val = state->spi_rx_buf[0u];
         state->config_registers.fifo_status.val = state->spi_rx_buf[1u];
+        state->sm_state = NRF_SM_IDLE;
     }
 }
 static void sm_state_receive_handler(eg_nrf24l01_state_s *state)
 {
-    asm("nop");
+    state->curr_rx_pipe = state->config_registers.status.rx_p_no;
+    if(0b111u == state->curr_rx_pipe)
+    {
+        /* RX fifo empty - clear rx_dr bit */
+        
+        state->config_registers.status_out.val = 0u;
+        state->config_registers.status_out.rx_dr = 1u;
+        spi_write_register(state,
+                           NRF_REG_STATUS,
+                           &state->config_registers.status_out.val,
+                           sizeof(state->config_registers.status_out));
+                           
+        state->sm_state = NRF_SM_RECEIVING_CLEAR;
+    }
+    else
+    {
+        uint8_t register_no = NRF_REG_RX_PW_P0 + state->curr_rx_pipe;
+        spi_read_register(state, register_no, 1u);
+        state->sm_state = NRF_SM_RECEIVING_LENGTH;
+    }
+}
+static void sm_state_receiving_length_handler(eg_nrf24l01_state_s *state)
+{
+    if (1u == state->spi_data_ready)
+    {
+        uint8_t data_length = state->spi_rx_buf[1u];
+        state->rx_data_len = data_length;
+
+        spi_read_register(state, NRF_CMD_R_RX_PAYLOAD, state->rx_data_len);
+        state->sm_state = NRF_SM_RECEIVING;
+    }
 }
 static void sm_state_receiving_handler(eg_nrf24l01_state_s *state)
 {
-    asm("nop");
+    if (1u == state->spi_data_ready)
+    {
+        if (state->rx_pipe[state->curr_rx_pipe].rx_callback != NULL)
+        {
+            state->rx_pipe[state->curr_rx_pipe].rx_callback(&state->spi_rx_buf[1],
+                                                            state->rx_data_len);
+        }
+        state->config_registers.status_out.val = 0u;
+        state->config_registers.status_out.rx_dr = 1u;
+        spi_write_register(state,
+                           NRF_REG_STATUS,
+                           &state->config_registers.status_out.val,
+                           sizeof(state->config_registers.status_out));
+
+        state->sm_state = NRF_SM_RECEIVING_CLEAR;
+    }
+}
+static void sm_state_receiving_clear_handler(eg_nrf24l01_state_s *state)
+{
+    if (1u == state->spi_data_ready)
+    {
+        state->sm_state = NRF_SM_STATUS_READ;
+    }
 }
 static void sm_state_transmit_handler(eg_nrf24l01_state_s *state)
 {

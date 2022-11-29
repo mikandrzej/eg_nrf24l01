@@ -41,6 +41,7 @@ typedef struct
     } rx_pipe[EG_NRF24L01_MAX_ADDRESS_NO];              /**< RX addresses */
     eg_nrf_set_pin_state_callback set_ce_callback;      /**< User callback for setting CE pin state */
     eg_nrf_set_pin_state_callback set_csn_callback;     /**< User callback for setting CSn pin state */
+    eg_nrf_get_pin_state_callback ger_irq_callback;     /**< User callback for getting IRQ pin state */
 } eg_nrf24l01_init_data_s;
 
 /**
@@ -117,14 +118,7 @@ extern void eg_nrf24l01_user_spi_transmit_receive(eg_nrf24l01_state_s *state,
  */
 extern void eg_nrf24l01_spi_comm_complete(eg_nrf24l01_state_s *state,
                                           uint8_t rx_len);
-
-/**
- * Function to handle External Interrupt on FALLING edge of IRQ module pin
- * 
- * @param state pointer to internal driver state object given by eg_nrf24l01_user_spi_transmit_receive function
- */
-extern void eg_nrf24l01_irq_handler(eg_nrf24l01_state_s *state);
-
+                                          
 /**
  * @}
  * 

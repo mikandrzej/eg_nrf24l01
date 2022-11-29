@@ -14,6 +14,8 @@
 typedef void (*eg_nrf_rx_callback)(uint8_t *data, uint8_t data_size);
 /** User set GPIO pin state prototype */
 typedef void (*eg_nrf_set_pin_state_callback)(uint8_t state);
+/** User get GPIO pin state prototype */
+typedef uint8_t (*eg_nrf_get_pin_state_callback)(void);
 
 /** nRF24L01 SETUP_AW register struct */
 typedef union
@@ -118,6 +120,20 @@ typedef struct
     };
 } __attribute__((packed)) eg_nrf24l01_en_rxaddr_reg_s;
 
+/** nRF24L01 Number of bytes in RX payload in data pipe */
+typedef struct
+{
+    union
+    {
+        struct
+        {
+            uint8_t rx_pw_px : 6; /**<  Number of bytes in RX payload in data pipe */
+            uint8_t : 2;
+        } __attribute__((packed));
+        uint8_t val; /** RAW value */
+    };
+} __attribute__((packed)) eg_nrf24l01_rx_pw_px_reg_s;
+
 /** nRF24L01 internal machine state states */
 typedef enum
 {
@@ -126,10 +142,12 @@ typedef enum
     NRF_SM_CONFIGURE,
     NRF_SM_SLEEP,
     NRF_SM_IDLE,
-    NRF_SM_EXT_INT,
+    NRF_SM_STATUS_READ,
     NRF_SM_STATUS_READING,
     NRF_SM_RECEIVE,
+    NRF_SM_RECEIVING_LENGTH,
     NRF_SM_RECEIVING,
+    NRF_SM_RECEIVING_CLEAR,
     NRF_SM_TRANSMIT,
     NRF_SM_TRANSMITTING,
     NRF_SM_POWERING_OFF,
@@ -147,12 +165,19 @@ typedef struct
         eg_nrf24l01_en_rxaddr_reg_s en_rxaddr;             /**< EN_RXADDR register value */
         eg_nrf24l01_setup_aw_reg_s setup_aw;               /**< SETUP_AW register value */
         eg_nrf24l01_status_reg_s status;                   /**< STATUS register value */
+        eg_nrf24l01_status_reg_s status_out;               /**< output STATUS register value */
         uint8_t rx_addr_p0[EG_NRF24L01_ADDRESS_MAX_WIDTH]; /**< RX address on PIPE 0 */
         uint8_t rx_addr_p1[EG_NRF24L01_ADDRESS_MAX_WIDTH]; /**< RX address on PIPE 1 */
         uint8_t rx_addr_p2;                                /**< RX address on PIPE 2 - four MSB ar the same as on P1 */
         uint8_t rx_addr_p3;                                /**< RX address on PIPE 3 - four MSB ar the same as on P1 */
         uint8_t rx_addr_p4;                                /**< RX address on PIPE 4 - four MSB ar the same as on P1 */
         uint8_t rx_addr_p5;                                /**< RX address on PIPE 5 - four MSB ar the same as on P1 */
+        eg_nrf24l01_rx_pw_px_reg_s rx_pw_p0;               /**< RX data size in pipe 0 */
+        eg_nrf24l01_rx_pw_px_reg_s rx_pw_p1;               /**< RX data size in pipe 1 */
+        eg_nrf24l01_rx_pw_px_reg_s rx_pw_p2;               /**< RX data size in pipe 2 */
+        eg_nrf24l01_rx_pw_px_reg_s rx_pw_p3;               /**< RX data size in pipe 3 */
+        eg_nrf24l01_rx_pw_px_reg_s rx_pw_p4;               /**< RX data size in pipe 4 */
+        eg_nrf24l01_rx_pw_px_reg_s rx_pw_p5;               /**< RX data size in pipe 5 */
         eg_nrf24l01_fifo_status_reg_s fifo_status;         /**< FIFO_STATUS register value */
     } config_registers;
 
@@ -166,6 +191,8 @@ typedef struct
     eg_nrf_set_pin_state_callback set_ce_callback;
     /** Set non Chip Select GPIO user callback */
     eg_nrf_set_pin_state_callback set_csn_callback;
+    /** Get IRQ pin state user callback */
+    eg_nrf_get_pin_state_callback get_irq_callback;
 
     /* SPI specific */
     /** Local SPI tx buffer */
@@ -175,6 +202,12 @@ typedef struct
     /** Local SPI rx data length value */
     volatile uint8_t spi_rx_data_len;
 
+    /* Receive part */
+    /** Saved RX pipe number between SM states */
+    uint8_t curr_rx_pipe;
+    /** Length of data to receive from module */
+    uint8_t rx_data_len;
+
     /* SM data */
     /** Machine state internal Power On Request flag */
     volatile uint8_t power_on_request;
@@ -182,8 +215,6 @@ typedef struct
     volatile uint8_t wake_up_request;
     /** Machine state internal Sleep Request flag */
     volatile uint8_t sleep_request;
-    /** Machine state internal External Interrupt Request flag */
-    volatile uint8_t ext_interrupt_request;
     /** Machine state SPI data ready flag */
     volatile uint8_t spi_data_ready;
     /** Saved timestamp value */
